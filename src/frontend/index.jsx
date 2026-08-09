@@ -77,7 +77,7 @@ const App = () => {
     setJobError('');
     try {
       const result = await invoke('startMigration', {
-        jiraInstance: 'healthfinch',
+        jiraInstance: 'pwnkmrshah',
         jiraFilterId: jiraFilterId.trim(),
         adoProject: selectedProject?.label,
       });
@@ -96,13 +96,14 @@ const App = () => {
 
   // Poll job status every 5 seconds while migration is in-flight
   useEffect(() => {
-    if (!jobId || migrationStatus === 'completed' || migrationStatus === 'failed') return;
+    const terminalStates = ['completed', 'warning', 'failed'];
+    if (!jobId || terminalStates.includes(migrationStatus)) return;
     const interval = setInterval(async () => {
       try {
         const result = await invoke('pollJobStatus', { jobId });
         if (result.status) setMigrationStatus(result.status);
         if (result.output) setJobOutput(result.output);
-        if (result.error && result.status === 'failed') setJobError(result.error);
+        if (result.error_summary && ['failed', 'warning'].includes(result.status)) setJobError(result.error_summary);
       } catch {
         // keep polling
       }
@@ -188,7 +189,7 @@ const App = () => {
                   <Label labelFor="jira-instance">Jira Instance</Label>
                   <Textfield
                     id="jira-instance"
-                    value="healthfinch"
+                    value="pwnkmrshah"
                     isReadOnly
                   />
                 </Stack>
@@ -248,16 +249,27 @@ const App = () => {
                   </Stack>
                 )}
                 {migrationStatus === 'completed' && (
-                  <SectionMessage appearance="success">
-                    <Text>✅ Migration completed successfully!</Text>
-                    {jobOutput ? (
-                      <Text>{jobOutput.trim().split('\n').slice(-3).join(' | ')}</Text>
-                    ) : null}
+                  jobOutput && jobOutput.includes('Found 0 issues') ? (
+                    <SectionMessage appearance="warning">
+                      <Text>⚠️ Filter returned 0 issues — nothing was migrated. Check that your filter has work items and is shared with this account.</Text>
+                    </SectionMessage>
+                  ) : (
+                    <SectionMessage appearance="success">
+                      <Text>✅ Migration completed successfully!</Text>
+                      {jobOutput ? (
+                        <Text>{jobOutput.trim().split('\n').slice(-3).join(' | ')}</Text>
+                      ) : null}
+                    </SectionMessage>
+                  )
+                )}
+                {migrationStatus === 'warning' && (
+                  <SectionMessage appearance="warning">
+                    <Text>⚠️ Migrated with some issues — item was created/updated in ADO, but certain fields (e.g. Assigned To) could not be set because the Jira user is not a member of the ADO organisation. This is expected for test accounts and will not affect real migrations.</Text>
                   </SectionMessage>
                 )}
                 {migrationStatus === 'failed' && (
                   <SectionMessage appearance="error">
-                    <Text>❌ {jobError || 'Migration failed'}</Text>
+                    <Text>❌ {jobError || 'Migration failed. Check the filter ID and try again.'}</Text>
                   </SectionMessage>
                 )}
               </Stack>

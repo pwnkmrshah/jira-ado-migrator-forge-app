@@ -21,6 +21,7 @@ import ForgeReconciler, {
 } from '@forge/react';
 import { invoke, requestJira } from '@forge/bridge';
 import React, { useEffect, useState } from 'react';
+import GapAnalysisTab from './GapAnalysisTab';
 
 const JIRA_INSTANCE = 'pwnkmrshah';
 
@@ -39,6 +40,7 @@ const App = () => {
   const [skipAttachments, setSkipAttachments] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState('idle');
+  const [activeTab, setActiveTab] = useState('migrate'); // 'migrate' | 'gap'
   const [jobId, setJobId] = useState(null);
   const [jobOutput, setJobOutput] = useState('');
   const [jobError, setJobError] = useState('');
@@ -165,10 +167,37 @@ const App = () => {
         {isOpen && (
           <Modal onClose={() => setIsOpen(false)}>
             <ModalHeader>
-              <ModalTitle>🚀 Migrate to Azure DevOps</ModalTitle>
+              <ModalTitle>
+                {activeTab === 'migrate' ? '🚀 Migrate Board to Azure DevOps' : '🔍 Gap Analysis'}
+              </ModalTitle>
             </ModalHeader>
             <ModalBody>
               <Stack space="space.300">
+                {/* Tab bar */}
+                <Inline space="space.100">
+                  <Button
+                    appearance={activeTab === 'migrate' ? 'primary' : 'default'}
+                    onClick={() => setActiveTab('migrate')}
+                  >
+                    🚀 Migrate
+                  </Button>
+                  <Button
+                    appearance={activeTab === 'gap' ? 'primary' : 'default'}
+                    onClick={() => setActiveTab('gap')}
+                  >
+                    🔍 Gap Analysis
+                  </Button>
+                </Inline>
+
+                {/* ── Migrate tab content ── */}
+                {activeTab === 'migrate' && (
+                <Stack space="space.300">
+                <SectionMessage appearance="information">
+                  <Text>
+                    This will migrate all cards, attachments, and metadata from
+                    this Jira board to Azure DevOps.
+                  </Text>
+                </SectionMessage>
 
                 {/* Source Board — read-only, loaded from Jira Agile API */}
                 <Stack space="space.100">
@@ -302,20 +331,31 @@ const App = () => {
                     <Text>❌ {jobError || 'Migration failed'}</Text>
                   </SectionMessage>
                 )}
+                </Stack>
+                )}
 
+                {/* ── Gap Analysis tab content (partial) ── */}
+                {activeTab === 'gap' && (
+                  <GapAnalysisTab
+                    adoProjects={adoProjects}
+                    isLoadingProjects={isLoadingProjects}
+                  />
+                )}
               </Stack>
             </ModalBody>
             <ModalFooter>
               <Button appearance="subtle" onClick={() => setIsOpen(false)}>
                 Cancel
               </Button>
-              <Button
-                appearance="primary"
-                onClick={handleMigrate}
-                isDisabled={!canMigrate}
-              >
-                {isRunning ? 'Migrating...' : 'Migrate to ADO'}
-              </Button>
+              {activeTab === 'migrate' && (
+                <Button
+                  appearance="primary"
+                  onClick={handleMigrate}
+                  isDisabled={!canMigrate}
+                >
+                  {isRunning ? 'Migrating...' : 'Migrate to ADO'}
+                </Button>
+              )}
             </ModalFooter>
           </Modal>
         )}

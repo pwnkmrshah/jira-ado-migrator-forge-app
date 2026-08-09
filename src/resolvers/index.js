@@ -132,4 +132,34 @@ resolver.define('pollJobStatus', async ({ payload }) => {
   }
 });
 
+resolver.define('runGapAnalysis', async ({ payload }) => {
+  const apiUrl = process.env.MIGRATION_API_URL;
+  const apiKey = process.env.MIGRATION_API_KEY || '';
+
+  if (!apiUrl) return { error: 'MIGRATION_API_URL not configured' };
+
+  const body = {
+    jira_instance: payload?.jiraInstance || 'pwnkmrshah',
+    jira_filter: payload?.jiraFilterId || '',
+    ado_project: payload?.adoProject || '',
+    ado_board: payload?.adoBoard || '',
+  };
+
+  if (!body.jira_filter) return { error: 'Jira Filter ID is required' };
+  if (!body.ado_board) return { error: 'ADO Board is required' };
+
+  try {
+    const res = await fetch(`${apiUrl}/gaps`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { error: `Gap analysis API returned HTTP ${res.status}` };
+    const data = await res.json();
+    return { jobId: data.job_id, status: data.status };
+  } catch (err) {
+    return { error: `Could not start gap analysis: ${err.message}` };
+  }
+});
+
 export const handler = resolver.getDefinitions();

@@ -1,0 +1,34 @@
+modules:
+  jira:projectPage:
+    - key: migrate-ado-page
+      title: Migrate to ADO
+      resource: main
+      render: native
+      resolver:
+        function: main-resolver
+  function:
+    - key: main-resolver
+      handler: resolvers/index.handler
+
+resources:
+  - key: main
+    path: src/frontend/index.jsx
+
+app:
+  id: ari:cloud:ecosystem::app/c5f3d028-37a6-408e-bfa1-ab185f2d3d83
+  runtime:
+    name: nodejs22.x
+
+permissions:
+  scopes:
+    - read:issue-details:jira
+    - read:jira-work
+    - write:jira-work
+    - read:board-scope:jira-software
+    - read:project:jira
+  external:
+    fetch:
+      backend:
+        - address: https://*.ngrok-free.app
+        - address: https://*.ngrok-free.dev
+        - address: https://*.ngrok.io

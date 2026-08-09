@@ -1,0 +1,26 @@
+{
+  "name": "jira-ado-migrator-forge",
+  "version": "1.0.0",
+  "description": "AI-powered Jira to Azure DevOps migration Forge app",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "forge build",
+    "deploy": "forge deploy",
+    "dev": "forge tunnel",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@forge/api": "^2.6.0",
+    "@forge/react": "^10.6.0",
+    "@forge/resolver": "^2.0.0",
+    "react": "18.3.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/preset-react": "^8.0.1"
+  },
+  "overrides": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

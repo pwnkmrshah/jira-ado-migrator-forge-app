@@ -90,9 +90,13 @@ resolver.define('startMigration', async ({ payload }) => {
     jira_instance: payload?.jiraInstance || 'healthfinch',
     ado_project: payload?.adoProject || '',
     jira_filter: payload?.jiraFilterId || '',
+    jira_keys: payload?.jiraKeys || '',
+    skip_attachments: payload?.skipAttachments || false,
   };
 
-  if (!body.jira_filter) return { error: 'Jira Filter ID is required' };
+  if (!body.jira_filter && !body.jira_keys) {
+    return { error: 'Provide either a Jira Filter ID or specific Jira Keys' };
+  }
 
   try {
     const res = await fetch(`${apiUrl}/migrate`, {

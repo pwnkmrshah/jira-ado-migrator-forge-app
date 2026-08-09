@@ -250,7 +250,7 @@ node --version   # → v22.x.x
 ### 2. Install Forge CLI
 
 ```bash
-# Correct package name is @forge/cli — NOT @atlassian/cli or @atlassian/forge-cli
+# Correct package name is @forge/cli
 npm install -g @forge/cli@latest
 
 # Verify (must be 13.x+)

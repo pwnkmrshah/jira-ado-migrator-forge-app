@@ -1,7 +1,7 @@
 modules:
   jira:projectPage:
     - key: migrate-ado-page
-      title: Migrate to ADO
+      title: ADO Migration
       resource: main
       render: native
       resolver:

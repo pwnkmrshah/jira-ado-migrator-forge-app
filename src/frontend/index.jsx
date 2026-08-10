@@ -45,6 +45,9 @@ const App = () => {
   const [jobId, setJobId] = useState(null);
   const [jobOutput, setJobOutput] = useState('');
   const [jobError, setJobError] = useState('');
+  const [migProgress, setMigProgress] = useState({
+    total: 0, done: 0, currentCard: '', currentAdo: '', currentAction: '', liveLog: [],
+  });
   const context = useProductContext();
 
   useEffect(() => {
@@ -68,6 +71,7 @@ const App = () => {
     setJobId(null);
     setJobOutput('');
     setJobError('');
+    setMigProgress({ total: 0, done: 0, currentCard: '', currentAdo: '', currentAction: '', liveLog: [] });
     try {
       const result = await invoke('startMigration', {
         jiraInstance: JIRA_INSTANCE,
@@ -99,6 +103,16 @@ const App = () => {
         if (result.status) setMigrationStatus(result.status);
         if (result.output) setJobOutput(result.output);
         if (result.error && ['failed', 'warning'].includes(result.status)) setJobError(result.error);
+        if (result.progress || result.live_log) {
+          setMigProgress(prev => ({
+            total: result.progress?.total ?? prev.total,
+            done: result.progress?.done ?? prev.done,
+            currentCard: result.progress?.current_card ?? prev.currentCard,
+            currentAdo: result.progress?.current_ado ?? prev.currentAdo,
+            currentAction: result.progress?.current_action ?? prev.currentAction,
+            liveLog: result.live_log ?? prev.liveLog,
+          }));
+        }
       } catch {
         // keep polling
       }
@@ -114,10 +128,12 @@ const App = () => {
 
   const canMigrate = !isRunning && !!selectedProject && hasInput;
 
-  // Last 4 non-empty log lines shown during in-progress state
-  const recentLogLines = jobOutput
-    ? jobOutput.trim().split('\n').filter(l => l.trim()).slice(-4)
-    : [];
+  // Text-based progress bar: ▓▓▓▓░░░░░░  4 / 10 cards
+  const renderProgressBar = (done, total) => {
+    if (!total) return null;
+    const filled = Math.round(Math.min(done / total, 1) * 20);
+    return `${'▓'.repeat(filled)}${'░'.repeat(20 - filled)}  ${done} / ${total} cards`;
+  };
 
   useEffect(() => {
     if (!context) return;
@@ -285,7 +301,7 @@ const App = () => {
                   isDisabled={isRunning}
                 />
 
-                {/* In-progress: spinner + live log tail from polling */}
+                {/* In-progress: spinner + progress bar + live log */}
                 {isRunning && (
                   <SectionMessage appearance="information">
                     <Stack space="space.200">
@@ -299,14 +315,28 @@ const App = () => {
                             : 'Migration in progress...'}
                         </Text>
                       </Inline>
-                      {recentLogLines.length > 0 ? (
+
+                      {/* Progress bar — visible once we know the total */}
+                      {migProgress.total > 0 && (
+                        <Text>{renderProgressBar(migProgress.done, migProgress.total)}</Text>
+                      )}
+
+                      {/* Current card + ADO item */}
+                      {migProgress.currentCard && (
+                        <Text>
+                          {`⚙️ ${migProgress.currentCard}${migProgress.currentAdo ? ` → ADO #${migProgress.currentAdo}` : ''} (${migProgress.currentAction})`}
+                        </Text>
+                      )}
+
+                      {/* Live log tail — last 8 key lines */}
+                      {migProgress.liveLog.length > 0 ? (
                         <Stack space="space.050">
-                          {recentLogLines.map((line, i) => (
+                          {migProgress.liveLog.slice(-8).map((line, i) => (
                             <Text key={i}>{line}</Text>
                           ))}
                         </Stack>
                       ) : (
-                        <Text>Connecting to migration engine...</Text>
+                        !migProgress.currentCard && <Text>Connecting to migration engine...</Text>
                       )}
                     </Stack>
                   </SectionMessage>
@@ -316,8 +346,8 @@ const App = () => {
                   <SectionMessage appearance="success">
                     <Stack space="space.100">
                       <Text>✅ Migration completed successfully!</Text>
-                      {recentLogLines.length > 0 && (
-                        <Text>{recentLogLines.join(' | ')}</Text>
+                      {migProgress.total > 0 && (
+                        <Text>{`${migProgress.done} / ${migProgress.total} cards migrated`}</Text>
                       )}
                     </Stack>
                   </SectionMessage>

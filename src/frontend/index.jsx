@@ -22,6 +22,7 @@ import ForgeReconciler, {
 import { invoke, requestJira } from '@forge/bridge';
 import React, { useEffect, useState } from 'react';
 import GapAnalysisTab from './GapAnalysisTab';
+import VerifyTab from './VerifyTab';
 
 const JIRA_INSTANCE = 'pwnkmrshah';
 
@@ -40,7 +41,7 @@ const App = () => {
   const [skipAttachments, setSkipAttachments] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState('idle');
-  const [activeTab, setActiveTab] = useState('migrate'); // 'migrate' | 'gap'
+  const [activeTab, setActiveTab] = useState('migrate'); // 'migrate' | 'gap' | 'verify'
   const [jobId, setJobId] = useState(null);
   const [jobOutput, setJobOutput] = useState('');
   const [jobError, setJobError] = useState('');
@@ -168,7 +169,7 @@ const App = () => {
           <Modal onClose={() => setIsOpen(false)}>
             <ModalHeader>
               <ModalTitle>
-                {activeTab === 'migrate' ? '🚀 Migrate Board to Azure DevOps' : '🔍 Gap Analysis'}
+                {activeTab === 'migrate' ? '🚀 Migrate Board to Azure DevOps' : activeTab === 'gap' ? '🔍 Gap Analysis' : '✅ Verify Migration'}
               </ModalTitle>
             </ModalHeader>
             <ModalBody>
@@ -186,6 +187,12 @@ const App = () => {
                     onClick={() => setActiveTab('gap')}
                   >
                     🔍 Gap Analysis
+                  </Button>
+                  <Button
+                    appearance={activeTab === 'verify' ? 'primary' : 'default'}
+                    onClick={() => setActiveTab('verify')}
+                  >
+                    ✅ Verify
                   </Button>
                 </Inline>
 
@@ -337,6 +344,14 @@ const App = () => {
                 {/* ── Gap Analysis tab content (partial) ── */}
                 {activeTab === 'gap' && (
                   <GapAnalysisTab
+                    adoProjects={adoProjects}
+                    isLoadingProjects={isLoadingProjects}
+                  />
+                )}
+
+                {/* ── Verify Migration tab content (partial) ── */}
+                {activeTab === 'verify' && (
+                  <VerifyTab
                     adoProjects={adoProjects}
                     isLoadingProjects={isLoadingProjects}
                   />

@@ -162,4 +162,37 @@ resolver.define('runGapAnalysis', async ({ payload }) => {
   }
 });
 
+// POSTs to /verify and returns { jobId, status } immediately (job runs async on the server).
+resolver.define('startVerification', async ({ payload }) => {
+  const apiUrl = process.env.MIGRATION_API_URL;
+  const apiKey = process.env.MIGRATION_API_KEY || '';
+
+  if (!apiUrl) return { error: 'MIGRATION_API_URL not configured' };
+
+  const body = {
+    jira_instance: payload?.jiraInstance || 'pwnkmrshah',
+    ado_project: payload?.adoProject || '',
+    project_key: payload?.projectKey || '',
+    jira_keys: payload?.jiraKeys || '',
+    jira_filter: payload?.jiraFilterId || '',
+  };
+
+  if (!body.project_key && !body.jira_keys && !body.jira_filter) {
+    return { error: 'Provide a Project Key, specific Jira Keys, or a Filter ID' };
+  }
+
+  try {
+    const res = await fetch(`${apiUrl}/verify`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { error: `Verify API returned HTTP ${res.status}` };
+    const data = await res.json();
+    return { jobId: data.job_id, status: data.status };
+  } catch (err) {
+    return { error: `Could not start verification: ${err.message}` };
+  }
+});
+
 export const handler = resolver.getDefinitions();

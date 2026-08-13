@@ -65,9 +65,7 @@ repos/jira-to-ado/             ← sibling repo (Python migration engine)
 ### Step 1 — Start the Flask API bridge
 
 ```bash
-cd /home/pawan/ferret/repos/jira-to-ado
-
-export MIGRATION_API_KEY=your-secret-key
+cd /home/pawan/ferret/repos/jira-to-ado && export MIGRATION_API_KEY=demo-key-change-me
 pip install flask   # once
 python3 api_server.py
 # → Listening on http://0.0.0.0:5001
@@ -125,13 +123,11 @@ forge deploy --approve MAJOR_VERSION_RULE
 
 ## How to Run the Demo (Every Session)
 
-Do these **4 steps in order** every time you start a new dev session.
+Do these **3 steps in order** every time you start a new dev session.
 
 ---
 
 ### Step 1 — Start the Flask API bridge
-
-The Flask server reads ADO credentials automatically from `config/ado_config.json`. No manual credential export needed.
 
 ```bash
 cd /home/pawan/ferret/repos/jira-to-ado
@@ -140,45 +136,47 @@ python3 api_server.py
 # → Running on http://127.0.0.1:5001
 ```
 
-**Keep this terminal open.** If port 5001 is already in use from a previous session:
+**Keep this terminal open.** If port 5001 is already in use:
 ```bash
-kill $(lsof -ti:5001)
-# then re-run the python3 command above
+kill $(lsof -ti:5001) && python3 api_server.py
 ```
 
 ---
 
 ### Step 2 — Start the ngrok tunnel
 
-In a separate terminal, expose the Flask server publicly so Atlassian's cloud can reach it:
-
 ```bash
-ngrok http 5001
-# → Forwarding https://abc123.ngrok-free.dev -> http://localhost:5001
+# ngrok lives in /snap/bin — add it to PATH if needed
+export PATH="$PATH:/snap/bin"
+
+# Start with the saved static domain (never changes — no Forge redeploy needed)
+ngrok http 5001 --url=limping-blabber-quench.ngrok-free.dev
 ```
 
-**Keep this terminal open.** Copy the `https://` forwarding URL — you need it in Step 3.
+**Keep this terminal open.**
 
-> **ngrok domain:** The URL format can be `ngrok-free.app`, `ngrok-free.dev`, or `ngrok.io` depending on your ngrok version. All three are in the manifest egress.
+Verify: `curl https://limping-blabber-quench.ngrok-free.dev/health` → `{ "status": "ok" }`
+
+> **Why `export PATH` is needed:** ngrok is installed via snap (`/snap/bin/ngrok`). That directory is not in the default PATH on this machine. Running `source ~/.bashrc` in a new terminal also fixes it permanently.
+
+> **Static domain:** This account has `limping-blabber-quench.ngrok-free.dev` reserved. The Forge variable `MIGRATION_API_URL` is already set to this URL — **no Forge redeploy is needed when restarting ngrok**.
 
 ---
 
-### Step 3 — Update Forge variable when ngrok URL changes
+### Step 3 — Only if you need to change the ngrok URL
 
-ngrok free tier gives a **new URL every restart**. After starting ngrok, if the URL changed from last time, update the Forge variable and redeploy:
+If the static domain ever changes (or you switch to a different machine/account):
 
 ```bash
 cd /home/pawan/ferret/jira-ado-migrator-forge-app
-source .env                          # REQUIRED — loads FORGE_EMAIL + FORGE_API_TOKEN
+source .env                          # loads FORGE_EMAIL + FORGE_API_TOKEN (no keychain on this machine)
 export NVM_DIR="$HOME/.nvm" && source "$NVM_DIR/nvm.sh" && nvm use 22
 
-forge variables set --environment development MIGRATION_API_URL https://YOUR-NGROK-URL-HERE
+forge variables set --environment development MIGRATION_API_URL https://NEW-NGROK-URL-HERE
 forge deploy --no-verify
 ```
 
-**If the ngrok URL is the same as last time** (e.g. you have a saved static domain), skip this step.
-
-> **Why `source .env` is required:** This server has no GNOME Keyring. Without it, Forge CLI cannot authenticate and throws `Keytar error: Could not connect`. The `.env` file provides `FORGE_EMAIL` and `FORGE_API_TOKEN` (with `export` prefix) that bypass the keychain.
+> **Why `source .env` is required:** This server has no GNOME Keyring. Without it, Forge CLI throws `Keytar error: Could not connect`. The `.env` file provides `FORGE_EMAIL` and `FORGE_API_TOKEN` (with `export` prefix) that bypass the keychain.
 
 ---
 

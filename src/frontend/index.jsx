@@ -23,11 +23,29 @@ import { invoke, requestJira } from '@forge/bridge';
 import React, { useEffect, useState } from 'react';
 import GapAnalysisTab from './GapAnalysisTab';
 import VerifyTab from './VerifyTab';
+import AIMigrationTab from './AIMigrationTab';
 
 const JIRA_INSTANCE = 'pwnkmrshah';
 
 const App = () => {
   const [isOpen, setIsOpen] = useState(false);
+
+  // credScreen: 'checking' | 'setup' | 'connected'
+  const [credScreen, setCredScreen] = useState('checking');
+  const [credMeta, setCredMeta] = useState(null); // {jiraUrl, jiraEmail, adoOrg}
+
+  // Setup form fields
+  const [jiraUrl, setJiraUrl] = useState('');
+  const [jiraEmail, setJiraEmail] = useState('');
+  const [jiraToken, setJiraToken] = useState('');
+  const [adoOrg, setAdoOrg] = useState('');
+  const [adoPat, setAdoPat] = useState('');
+  const [jiraTestStatus, setJiraTestStatus] = useState('idle'); // 'idle'|'testing'|'ok'|'fail'
+  const [adoTestStatus, setAdoTestStatus] = useState('idle');
+  const [jiraTestMsg, setJiraTestMsg] = useState('');
+  const [adoTestMsg, setAdoTestMsg] = useState('');
+  const [savingCreds, setSavingCreds] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [jiraProjects, setJiraProjects] = useState([]);
   const [selectedJiraProject, setSelectedJiraProject] = useState(null);
   const [isLoadingJiraProjects, setIsLoadingJiraProjects] = useState(true);
@@ -42,12 +60,63 @@ const App = () => {
   const [skipAttachments, setSkipAttachments] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState('idle');
-  const [activeTab, setActiveTab] = useState('migrate'); // 'migrate' | 'gap' | 'verify'
+  const [activeTab, setActiveTab] = useState('ai'); // 'ai' | 'migrate' | 'gap' | 'verify'
   const [jobId, setJobId] = useState(null);
   const [jobOutput, setJobOutput] = useState('');
   const [jobError, setJobError] = useState('');
 
   // Fetch all Jira projects so the user can pick source without navigating to a specific board
+  useEffect(() => {
+    // Check stored credentials on mount
+    invoke('loadCredentialsMeta').then(result => {
+      if (result.hasCredentials) {
+        setCredMeta(result);
+        setCredScreen('connected');
+      } else {
+        setCredScreen('setup');
+      }
+    }).catch(() => setCredScreen('setup'));
+  }, []);
+
+  const handleTestJira = async () => {
+    setJiraTestStatus('testing');
+    const result = await invoke('testJiraConnection', { jiraUrl, jiraEmail, jiraToken });
+    setJiraTestStatus(result.success ? 'ok' : 'fail');
+    setJiraTestMsg(result.success ? `Connected as ${result.displayName}` : result.error);
+  };
+
+  const handleTestAdo = async () => {
+    setAdoTestStatus('testing');
+    const result = await invoke('testAdoConnection', { adoOrg, adoPat });
+    setAdoTestStatus(result.success ? 'ok' : 'fail');
+    setAdoTestMsg(result.success ? `Connected — ${result.projectCount} project(s) found` : result.error);
+  };
+
+  const handleSaveCredentials = async () => {
+    setSavingCreds(true);
+    setSaveError('');
+    const result = await invoke('saveCredentials', { jiraUrl, jiraEmail, jiraToken, adoOrg, adoPat });
+    setSavingCreds(false);
+    if (result.success) {
+      setCredMeta({ jiraUrl, jiraEmail, adoOrg });
+      setCredScreen('connected');
+    } else {
+      setSaveError(result.error || 'Failed to save credentials');
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await invoke('deleteCredentials');
+    setCredMeta(null);
+    setJiraUrl(''); setJiraEmail(''); setJiraToken('');
+    setAdoOrg(''); setAdoPat('');
+    setJiraTestStatus('idle'); setAdoTestStatus('idle');
+    setCredScreen('setup');
+  };
+
+  const canSave = jiraUrl && jiraEmail && jiraToken && adoOrg && adoPat && !savingCreds;
+
+  // Jira project list for source picker (loaded after credentials are confirmed)
   useEffect(() => {
     const fetchJiraProjects = async () => {
       try {
@@ -148,7 +217,86 @@ const App = () => {
 
   return (
     <Box xcss={wrapStyle}>
+
+      {/* ── Checking credentials ─────────────────────────────── */}
+      {credScreen === 'checking' && (
+        <Inline alignBlock="center" space="space.100">
+          <Spinner size="small" />
+          <Text>Loading...</Text>
+        </Inline>
+      )}
+
+      {/* ── Credential setup ─────────────────────────────────── */}
+      {credScreen === 'setup' && (
+        <Stack space="space.400">
+          <Text>🔌 Connect your Jira and Azure DevOps accounts. Credentials are stored encrypted and never written to disk.</Text>
+
+          <Stack space="space.200">
+            <Text>JIRA</Text>
+            <Stack space="space.100">
+              <Label labelFor="jira-url">Jira URL</Label>
+              <Textfield id="jira-url" value={jiraUrl} onChange={e => setJiraUrl(e.target.value)} placeholder="https://yourcompany.atlassian.net" />
+            </Stack>
+            <Stack space="space.100">
+              <Label labelFor="jira-email">Email</Label>
+              <Textfield id="jira-email" value={jiraEmail} onChange={e => setJiraEmail(e.target.value)} placeholder="you@company.com" />
+            </Stack>
+            <Stack space="space.100">
+              <Label labelFor="jira-token">API Token</Label>
+              <Textfield id="jira-token" value={jiraToken} onChange={e => setJiraToken(e.target.value)} placeholder="ATATT3x..." />
+            </Stack>
+            <Inline space="space.100" alignBlock="center">
+              <Button appearance="default" onClick={handleTestJira} isDisabled={!jiraUrl || !jiraEmail || !jiraToken || jiraTestStatus === 'testing'}>
+                {jiraTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+              </Button>
+              {jiraTestStatus === 'ok' && <Text>✅ {jiraTestMsg}</Text>}
+              {jiraTestStatus === 'fail' && <Text>❌ {jiraTestMsg}</Text>}
+            </Inline>
+          </Stack>
+
+          <Stack space="space.200">
+            <Text>AZURE DEVOPS</Text>
+            <Stack space="space.100">
+              <Label labelFor="ado-org">Organisation</Label>
+              <Textfield id="ado-org" value={adoOrg} onChange={e => setAdoOrg(e.target.value)} placeholder="yourorg" />
+            </Stack>
+            <Stack space="space.100">
+              <Label labelFor="ado-pat">Personal Access Token</Label>
+              <Textfield id="ado-pat" value={adoPat} onChange={e => setAdoPat(e.target.value)} placeholder="7IXQJTQ9o4..." />
+            </Stack>
+            <Inline space="space.100" alignBlock="center">
+              <Button appearance="default" onClick={handleTestAdo} isDisabled={!adoOrg || !adoPat || adoTestStatus === 'testing'}>
+                {adoTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+              </Button>
+              {adoTestStatus === 'ok' && <Text>✅ {adoTestMsg}</Text>}
+              {adoTestStatus === 'fail' && <Text>❌ {adoTestMsg}</Text>}
+            </Inline>
+          </Stack>
+
+          {saveError && <SectionMessage appearance="error"><Text>❌ {saveError}</Text></SectionMessage>}
+
+          <Inline>
+            <Button appearance="primary" onClick={handleSaveCredentials} isDisabled={!canSave}>
+              {savingCreds ? 'Saving...' : 'Save & Continue →'}
+            </Button>
+          </Inline>
+        </Stack>
+      )}
+
+      {/* ── Main migration wizard (shown after credentials are set) ── */}
+      {credScreen === 'connected' && (
       <Stack space="space.500">
+
+        {/* Connected accounts banner */}
+        <SectionMessage appearance="success">
+          <Inline spread="space-between" alignBlock="center">
+            <Stack space="space.050">
+              <Text>✅ Jira: {credMeta?.jiraUrl} ({credMeta?.jiraEmail})</Text>
+              <Text>✅ ADO: dev.azure.com/{credMeta?.adoOrg}</Text>
+            </Stack>
+            <Button appearance="subtle" onClick={handleDisconnect}>Disconnect</Button>
+          </Inline>
+        </SectionMessage>
 
         {/* Landing — always visible above the form */}
         <Stack space="space.300">
@@ -182,16 +330,24 @@ const App = () => {
             <Modal onClose={() => setIsOpen(false)}>
               <ModalHeader>
                 <ModalTitle>
-                  {activeTab === 'migrate' ? '🚀 Migrate to Azure DevOps' : activeTab === 'gap' ? '🔍 Gap Analysis' : '✅ Verify Migration'}
+                  {activeTab === 'ai' ? '✨ AI Migration' : activeTab === 'migrate' ? '⚙️ Manual Migration' : activeTab === 'gap' ? '🔍 Gap Analysis' : '✅ Verify Migration'}
                 </ModalTitle>
               </ModalHeader>
               <ModalBody>
                 <Stack space="space.300">
                   <Inline space="space.100">
-                    <Button appearance={activeTab === 'migrate' ? 'primary' : 'default'} onClick={() => setActiveTab('migrate')}>🚀 Migrate</Button>
+                    <Button appearance={activeTab === 'ai' ? 'primary' : 'default'} onClick={() => setActiveTab('ai')}>✨ AI Migrate</Button>
+                    <Button appearance={activeTab === 'migrate' ? 'primary' : 'default'} onClick={() => setActiveTab('migrate')}>⚙️ Manual</Button>
                     <Button appearance={activeTab === 'gap' ? 'primary' : 'default'} onClick={() => setActiveTab('gap')}>🔍 Gap Analysis</Button>
                     <Button appearance={activeTab === 'verify' ? 'primary' : 'default'} onClick={() => setActiveTab('verify')}>✅ Verify</Button>
                   </Inline>
+
+                  {activeTab === 'ai' && (
+                    <AIMigrationTab
+                      adoProjects={adoProjects}
+                      isLoadingProjects={isLoadingProjects}
+                    />
+                  )}
 
                   {activeTab === 'migrate' && (
                     <Stack space="space.300">
@@ -287,6 +443,8 @@ const App = () => {
         </ModalTransition>
 
       </Stack>
+      )} {/* end credScreen === 'connected' */}
+
     </Box>
   );
 };

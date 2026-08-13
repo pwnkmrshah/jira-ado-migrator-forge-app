@@ -21,6 +21,7 @@ app:
 
 permissions:
   scopes:
+    - storage:app
     - read:issue-details:jira
     - read:jira-work
     - write:jira-work
@@ -29,6 +30,9 @@ permissions:
   external:
     fetch:
       backend:
+        - address: https://*.atlassian.net
+        - address: https://dev.azure.com
+        - address: https://vssps.dev.azure.com
         - address: https://*.ngrok-free.app
         - address: https://*.ngrok-free.dev
         - address: https://*.ngrok.io

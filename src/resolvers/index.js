@@ -1,9 +1,110 @@
 import Resolver from '@forge/resolver';
+import { storage } from '@forge/api';
 
 const resolver = new Resolver();
 
-// Called by the frontend via invoke('checkConnection') when user clicks Migrate to ADO.
-// Hits the local Flask API bridge (api_server.py) via the ngrok tunnel.
+// ─── Credential Management ────────────────────────────────────────────────────
+
+// Saves Jira + ADO credentials. Non-sensitive values go to storage, tokens to secret store.
+resolver.define('saveCredentials', async ({ payload }) => {
+  const { jiraUrl, jiraEmail, jiraToken, adoOrg, adoPat } = payload || {};
+
+  if (!jiraUrl || !jiraEmail || !jiraToken || !adoOrg || !adoPat) {
+    return { success: false, error: 'All fields are required' };
+  }
+
+  try {
+    await Promise.all([
+      storage.set('jira_url', jiraUrl.trim().replace(/\/$/, '')),
+      storage.set('jira_email', jiraEmail.trim()),
+      storage.setSecret('jira_token', jiraToken.trim()),
+      storage.set('ado_org', adoOrg.trim()),
+      storage.setSecret('ado_pat', adoPat.trim()),
+    ]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: `Failed to save credentials: ${err.message}` };
+  }
+});
+
+// Returns metadata only (no secrets) so the UI can show connected accounts.
+resolver.define('loadCredentialsMeta', async () => {
+  try {
+    const [jiraUrl, jiraEmail, adoOrg] = await Promise.all([
+      storage.get('jira_url'),
+      storage.get('jira_email'),
+      storage.get('ado_org'),
+    ]);
+    const hasJira = !!(jiraUrl && jiraEmail);
+    const hasAdo = !!adoOrg;
+    return { hasCredentials: hasJira && hasAdo, jiraUrl, jiraEmail, adoOrg };
+  } catch {
+    return { hasCredentials: false };
+  }
+});
+
+// Deletes all stored credentials.
+resolver.define('deleteCredentials', async () => {
+  try {
+    await Promise.all([
+      storage.delete('jira_url'),
+      storage.delete('jira_email'),
+      storage.deleteSecret('jira_token'),
+      storage.delete('ado_org'),
+      storage.deleteSecret('ado_pat'),
+    ]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Tests Jira connectivity using provided credentials (or stored ones if not provided).
+resolver.define('testJiraConnection', async ({ payload }) => {
+  try {
+    const url   = payload?.jiraUrl   || await storage.get('jira_url');
+    const email = payload?.jiraEmail || await storage.get('jira_email');
+    const token = payload?.jiraToken || await storage.getSecret('jira_token');
+
+    if (!url || !email || !token) return { success: false, error: 'Credentials missing' };
+
+    const creds = Buffer.from(`${email}:${token}`).toString('base64');
+    const res = await fetch(`${url}/rest/api/3/myself`, {
+      headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' },
+    });
+
+    if (!res.ok) return { success: false, error: `Jira returned HTTP ${res.status}` };
+    const data = await res.json();
+    return { success: true, displayName: data.displayName, accountId: data.accountId };
+  } catch (err) {
+    return { success: false, error: `Could not reach Jira: ${err.message}` };
+  }
+});
+
+// Tests ADO connectivity using provided credentials (or stored ones if not provided).
+resolver.define('testAdoConnection', async ({ payload }) => {
+  try {
+    const org = payload?.adoOrg || await storage.get('ado_org');
+    const pat = payload?.adoPat || await storage.getSecret('ado_pat');
+
+    if (!org || !pat) return { success: false, error: 'Credentials missing' };
+
+    const creds = Buffer.from(`:${pat}`).toString('base64');
+    const res = await fetch(`https://dev.azure.com/${encodeURIComponent(org)}/_apis/projects?api-version=7.0`, {
+      headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' },
+    });
+
+    if (!res.ok) return { success: false, error: `ADO returned HTTP ${res.status}` };
+    const data = await res.json();
+    return { success: true, projectCount: data.count };
+  } catch (err) {
+    return { success: false, error: `Could not reach Azure DevOps: ${err.message}` };
+  }
+});
+
+// ─── Existing resolvers ───────────────────────────────────────────────────────
+
+
 resolver.define('checkConnection', async () => {
   const apiUrl = process.env.MIGRATION_API_URL;
   const apiKey = process.env.MIGRATION_API_KEY || '';
@@ -32,65 +133,74 @@ resolver.define('checkConnection', async () => {
   }
 });
 
-// Fetches boards for a specific ADO project (called when user changes project dropdown).
+// Fetches boards for a specific ADO project using stored credentials (direct ADO API call).
 resolver.define('getAdoBoards', async ({ payload }) => {
-  const apiUrl = process.env.MIGRATION_API_URL;
-  const apiKey = process.env.MIGRATION_API_KEY || '';
   const projectName = payload?.projectName || '';
-
-  if (!apiUrl) return { boards: [], error: 'MIGRATION_API_URL not configured' };
   if (!projectName) return { boards: [], error: 'projectName is required' };
 
   try {
+    const org = await storage.get('ado_org');
+    const pat = await storage.getSecret('ado_pat');
+    if (!org || !pat) return { boards: [], error: 'ADO credentials not configured — complete setup first' };
+
+    const creds = Buffer.from(`:${pat}`).toString('base64');
     const res = await fetch(
-      `${apiUrl}/ado-boards?project=${encodeURIComponent(projectName)}`,
-      { headers: { 'X-API-Key': apiKey } }
+      `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(projectName)}/_apis/work/boards?api-version=7.0`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
     );
-    if (!res.ok) return { boards: [], error: `ADO boards API returned HTTP ${res.status}` };
+    if (!res.ok) return { boards: [], error: `ADO returned HTTP ${res.status}` };
     const data = await res.json();
-    return { boards: data.boards || [] };
+    return { boards: (data.value || []).map(b => ({ id: b.id, name: b.name })) };
   } catch (err) {
     return { boards: [], error: `Could not fetch ADO boards: ${err.message}` };
   }
 });
 
-// Fetches the list of ADO projects for the target organisation dropdown.
+// Fetches the list of ADO projects using stored credentials (direct ADO API call, no Flask needed).
 resolver.define('getAdoProjects', async () => {
-  const apiUrl = process.env.MIGRATION_API_URL;
-  const apiKey = process.env.MIGRATION_API_KEY || '';
-
-  if (!apiUrl) {
-    return { projects: [], error: 'MIGRATION_API_URL not configured' };
-  }
-
   try {
-    const res = await fetch(`${apiUrl}/ado-projects`, {
-      headers: { 'X-API-Key': apiKey },
-    });
+    const org = await storage.get('ado_org');
+    const pat = await storage.getSecret('ado_pat');
+    if (!org || !pat) return { projects: [], error: 'ADO credentials not configured — complete setup first' };
 
-    if (!res.ok) {
-      return { projects: [], error: `ADO API returned HTTP ${res.status}` };
-    }
-
+    const creds = Buffer.from(`:${pat}`).toString('base64');
+    const res = await fetch(
+      `https://dev.azure.com/${encodeURIComponent(org)}/_apis/projects?api-version=7.0&$top=100`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return { projects: [], error: `ADO returned HTTP ${res.status}` };
     const data = await res.json();
-    return { projects: data.projects || [] };
+    return { projects: (data.value || []).map(p => ({ id: p.id, name: p.name })) };
   } catch (err) {
     return { projects: [], error: `Could not fetch ADO projects: ${err.message}` };
   }
 });
 
-// POSTs to /migrate and returns { jobId, status } immediately (job runs async on the server).
+// POSTs to /migrate with stored credentials forwarded to Flask for subprocess injection.
 resolver.define('startMigration', async ({ payload }) => {
   const apiUrl = process.env.MIGRATION_API_URL;
   const apiKey = process.env.MIGRATION_API_KEY || '';
 
   if (!apiUrl) return { error: 'MIGRATION_API_URL not configured' };
 
+  // Read stored credentials — forwarded to Flask which injects them as env vars
+  const [jiraUrl, jiraEmail, jiraToken, adoOrg, adoPat] = await Promise.all([
+    storage.get('jira_url'),
+    storage.get('jira_email'),
+    storage.getSecret('jira_token'),
+    storage.get('ado_org'),
+    storage.getSecret('ado_pat'),
+  ]);
+
   const body = {
-    jira_instance: payload?.jiraInstance || 'healthfinch',
-    ado_project: payload?.adoProject || '',
-    jira_filter: payload?.jiraFilterId || '',
-    jira_keys: payload?.jiraKeys || '',
+    jira_url:         jiraUrl || '',
+    jira_email:       jiraEmail || '',
+    jira_token:       jiraToken || '',
+    ado_org:          adoOrg || '',
+    ado_pat:          adoPat || '',
+    ado_project:      payload?.adoProject || '',
+    jira_filter:      payload?.jiraFilterId || '',
+    jira_keys:        payload?.jiraKeys || '',
     skip_attachments: payload?.skipAttachments || false,
   };
 
@@ -192,6 +302,104 @@ resolver.define('startVerification', async ({ payload }) => {
     return { jobId: data.job_id, status: data.status };
   } catch (err) {
     return { error: `Could not start verification: ${err.message}` };
+  }
+});
+
+// Mock analysis data used as fallback when Flask /analyze isn't available yet
+const MOCK_ANALYSIS = {
+  total_issues: 253,
+  by_type: [
+    { name: 'Story', count: 120 },
+    { name: 'Bug', count: 67 },
+    { name: 'Task', count: 19 },
+    { name: 'Technical Debt', count: 47 },
+  ],
+  by_status: [
+    { name: 'In Progress', count: 89 },
+    { name: 'Done', count: 121 },
+    { name: 'To Do', count: 43 },
+  ],
+  ado_available_types: ['User Story', 'Task', 'Bug', 'Feature', 'Epic'],
+  type_gaps: [{ jira_type: 'Technical Debt', has_ado_match: false }],
+  user_gaps: [],
+  attachment_count: 89,
+  comment_count: 412,
+  _mock: true,
+};
+
+// Calls Flask /analyze with credentials; falls back to mock data for demo purposes.
+resolver.define('runAnalysis', async ({ payload }) => {
+  const apiUrl = process.env.MIGRATION_API_URL;
+  const apiKey = process.env.MIGRATION_API_KEY || '';
+
+  const [jiraUrl, jiraEmail, jiraToken, adoOrg, adoPat] = await Promise.all([
+    storage.get('jira_url'),
+    storage.get('jira_email'),
+    storage.getSecret('jira_token'),
+    storage.get('ado_org'),
+    storage.getSecret('ado_pat'),
+  ]);
+
+  if (!apiUrl) return { ...MOCK_ANALYSIS, _note: 'MIGRATION_API_URL not set — showing mock data' };
+
+  try {
+    const res = await fetch(`${apiUrl}/analyze`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent:      payload?.intent || '',
+        ado_project: payload?.adoProject || '',
+        jira_url:    jiraUrl || '',
+        jira_email:  jiraEmail || '',
+        jira_token:  jiraToken || '',
+        ado_org:     adoOrg || '',
+        ado_pat:     adoPat || '',
+      }),
+    });
+
+    if (!res.ok) {
+      // Flask endpoint not built yet — fall back to mock so UI is demonstrable
+      return { ...MOCK_ANALYSIS, _note: `Flask /analyze returned ${res.status} — showing mock data` };
+    }
+
+    return await res.json();
+  } catch {
+    return { ...MOCK_ANALYSIS, _note: 'Flask unreachable — showing mock data' };
+  }
+});
+
+// Receives the approved migration plan and triggers the existing /migrate endpoint.
+resolver.define('approveMigrationPlan', async ({ payload }) => {
+  const apiUrl = process.env.MIGRATION_API_URL;
+  const apiKey = process.env.MIGRATION_API_KEY || '';
+
+  if (!apiUrl) return { error: 'MIGRATION_API_URL not configured' };
+
+  const [jiraUrl, jiraEmail, jiraToken, adoOrg, adoPat] = await Promise.all([
+    storage.get('jira_url'),
+    storage.get('jira_email'),
+    storage.getSecret('jira_token'),
+    storage.get('ado_org'),
+    storage.getSecret('ado_pat'),
+  ]);
+
+  try {
+    const res = await fetch(`${apiUrl}/migrate`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        jira_url:   jiraUrl,
+        jira_email: jiraEmail,
+        jira_token: jiraToken,
+        ado_org:    adoOrg,
+        ado_pat:    adoPat,
+      }),
+    });
+    if (!res.ok) return { error: `Migration API returned HTTP ${res.status}` };
+    return await res.json();
+  } catch (err) {
+    return { error: `Could not start migration: ${err.message}` };
   }
 });
 

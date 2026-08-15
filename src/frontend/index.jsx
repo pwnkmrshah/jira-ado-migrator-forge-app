@@ -60,10 +60,16 @@ const App = () => {
   const [skipAttachments, setSkipAttachments] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState('idle');
+  const [aiIsMigrating, setAiIsMigrating] = useState(false);
+  const [aiCurrentScreen, setAiCurrentScreen] = useState('setup');
+  const [showManualLockMsg, setShowManualLockMsg] = useState(false);
   const [activeTab, setActiveTab] = useState('ai'); // 'ai' | 'migrate' | 'gap' | 'verify'
   const [jobId, setJobId] = useState(null);
   const [jobOutput, setJobOutput] = useState('');
   const [jobError, setJobError] = useState('');
+  const [jobProgress, setJobProgress] = useState(null);
+  const [jobSummary, setJobSummary] = useState('');
+  const [jobCardCsv, setJobCardCsv] = useState(null);
 
   // Fetch all Jira projects so the user can pick source without navigating to a specific board
   useEffect(() => {
@@ -157,6 +163,9 @@ const App = () => {
     setJobId(null);
     setJobOutput('');
     setJobError('');
+    setJobProgress(null);
+    setJobSummary('');
+    setJobCardCsv(null);
     try {
       const result = await invoke('startMigration', {
         jiraInstance: JIRA_INSTANCE,
@@ -187,6 +196,9 @@ const App = () => {
         const result = await invoke('pollJobStatus', { jobId });
         if (result.status) setMigrationStatus(result.status);
         if (result.output) setJobOutput(result.output);
+        if (result.progress) setJobProgress(result.progress);
+        if (result.error_summary) setJobSummary(result.error_summary);
+        if (result.card_csv) setJobCardCsv(result.card_csv);
         if (result.error && ['failed', 'warning'].includes(result.status)) setJobError(result.error);
       } catch {
         // keep polling
@@ -209,7 +221,7 @@ const App = () => {
     : [];
 
   const wrapStyle = xcss({
-    maxWidth: '640px',
+    maxWidth: '900px',
     marginLeft: 'auto',
     marginRight: 'auto',
     paddingTop: 'space.500',
@@ -228,124 +240,163 @@ const App = () => {
 
       {/* ── Credential setup ─────────────────────────────────── */}
       {credScreen === 'setup' && (
-        <Stack space="space.400">
-          <Text>🔌 Connect your Jira and Azure DevOps accounts. Credentials are stored encrypted and never written to disk.</Text>
+        <Stack space="space.500">
 
-          <Stack space="space.200">
-            <Text>JIRA</Text>
-            <Stack space="space.100">
-              <Label labelFor="jira-url">Jira URL</Label>
-              <Textfield id="jira-url" value={jiraUrl} onChange={e => setJiraUrl(e.target.value)} placeholder="https://yourcompany.atlassian.net" />
-            </Stack>
-            <Stack space="space.100">
-              <Label labelFor="jira-email">Email</Label>
-              <Textfield id="jira-email" value={jiraEmail} onChange={e => setJiraEmail(e.target.value)} placeholder="you@company.com" />
-            </Stack>
-            <Stack space="space.100">
-              <Label labelFor="jira-token">API Token</Label>
-              <Textfield id="jira-token" value={jiraToken} onChange={e => setJiraToken(e.target.value)} placeholder="ATATT3x..." />
-            </Stack>
-            <Inline space="space.100" alignBlock="center">
-              <Button appearance="default" onClick={handleTestJira} isDisabled={!jiraUrl || !jiraEmail || !jiraToken || jiraTestStatus === 'testing'}>
-                {jiraTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-              </Button>
-              {jiraTestStatus === 'ok' && <Text>✅ {jiraTestMsg}</Text>}
-              {jiraTestStatus === 'fail' && <Text>❌ {jiraTestMsg}</Text>}
-            </Inline>
+          {/* Header */}
+          <Stack space="space.150">
+            <Text>✨ Set up ADO Migration</Text>
+            <Text>Connect Jira and Azure DevOps once — credentials are encrypted and never written to disk.</Text>
           </Stack>
 
-          <Stack space="space.200">
-            <Text>AZURE DEVOPS</Text>
-            <Stack space="space.100">
-              <Label labelFor="ado-org">Organisation</Label>
-              <Textfield id="ado-org" value={adoOrg} onChange={e => setAdoOrg(e.target.value)} placeholder="yourorg" />
-            </Stack>
-            <Stack space="space.100">
-              <Label labelFor="ado-pat">Personal Access Token</Label>
-              <Textfield id="ado-pat" value={adoPat} onChange={e => setAdoPat(e.target.value)} placeholder="7IXQJTQ9o4..." />
-            </Stack>
-            <Inline space="space.100" alignBlock="center">
-              <Button appearance="default" onClick={handleTestAdo} isDisabled={!adoOrg || !adoPat || adoTestStatus === 'testing'}>
-                {adoTestStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-              </Button>
-              {adoTestStatus === 'ok' && <Text>✅ {adoTestMsg}</Text>}
-              {adoTestStatus === 'fail' && <Text>❌ {adoTestMsg}</Text>}
-            </Inline>
-          </Stack>
+          {/* Two-column cards */}
+          <Inline space="space.300" alignBlock="start">
 
-          {saveError && <SectionMessage appearance="error"><Text>❌ {saveError}</Text></SectionMessage>}
+            {/* Jira card */}
+            <Box xcss={xcss({ borderWidth: 'border.width', borderStyle: 'solid', borderColor: 'color.border', borderRadius: 'border.radius', padding: 'space.300' })}>
+              <Stack space="space.250">
+                <Inline spread="space-between" alignBlock="center">
+                  <Text>🔵 Jira</Text>
+                  {jiraTestStatus === 'ok' && <Text>✅ Connected</Text>}
+                  {jiraTestStatus === 'fail' && <Text>❌ Failed</Text>}
+                  {jiraTestStatus === 'testing' && <Spinner size="small" />}
+                </Inline>
+                <Stack space="space.100">
+                  <Label labelFor="jira-url">Jira URL</Label>
+                  <Textfield id="jira-url" value={jiraUrl} onChange={e => setJiraUrl(e.target.value)} placeholder="https://yourcompany.atlassian.net" />
+                </Stack>
+                <Stack space="space.100">
+                  <Label labelFor="jira-email">Email</Label>
+                  <Textfield id="jira-email" value={jiraEmail} onChange={e => setJiraEmail(e.target.value)} placeholder="you@company.com" />
+                </Stack>
+                <Stack space="space.100">
+                  <Label labelFor="jira-token">API Token</Label>
+                  <Textfield id="jira-token" type="password" value={jiraToken} onChange={e => setJiraToken(e.target.value)} placeholder="ATATT3x..." />
+                </Stack>
+                <Button
+                  appearance={jiraTestStatus === 'ok' ? 'default' : 'primary'}
+                  onClick={handleTestJira}
+                  isDisabled={!jiraUrl || !jiraEmail || !jiraToken || jiraTestStatus === 'testing'}
+                >
+                  {jiraTestStatus === 'testing' ? 'Testing…' : jiraTestStatus === 'ok' ? 'Re-test' : 'Test Connection'}
+                </Button>
+                {jiraTestStatus === 'fail' && <Text>{jiraTestMsg}</Text>}
+              </Stack>
+            </Box>
 
-          <Inline>
+            {/* ADO card */}
+            <Box xcss={xcss({ borderWidth: 'border.width', borderStyle: 'solid', borderColor: 'color.border', borderRadius: 'border.radius', padding: 'space.300' })}>
+              <Stack space="space.250">
+                <Inline spread="space-between" alignBlock="center">
+                  <Text>🔷 Azure DevOps</Text>
+                  {adoTestStatus === 'ok' && <Text>✅ Connected</Text>}
+                  {adoTestStatus === 'fail' && <Text>❌ Failed</Text>}
+                  {adoTestStatus === 'testing' && <Spinner size="small" />}
+                </Inline>
+                <Stack space="space.100">
+                  <Label labelFor="ado-org">Organization</Label>
+                  <Textfield id="ado-org" value={adoOrg} onChange={e => setAdoOrg(e.target.value)} placeholder="yourorg" />
+                </Stack>
+                <Stack space="space.100">
+                  <Label labelFor="ado-pat">Personal Access Token</Label>
+                  <Textfield id="ado-pat" type="password" value={adoPat} onChange={e => setAdoPat(e.target.value)} placeholder="7IXQJTQ9o4..." />
+                </Stack>
+                <Button
+                  appearance={adoTestStatus === 'ok' ? 'default' : 'primary'}
+                  onClick={handleTestAdo}
+                  isDisabled={!adoOrg || !adoPat || adoTestStatus === 'testing'}
+                >
+                  {adoTestStatus === 'testing' ? 'Testing…' : adoTestStatus === 'ok' ? 'Re-test' : 'Test Connection'}
+                </Button>
+                {adoTestStatus === 'fail' && <Text>{adoTestMsg}</Text>}
+              </Stack>
+            </Box>
+          </Inline>
+
+          {saveError && <SectionMessage appearance="error"><Text>{saveError}</Text></SectionMessage>}
+
+          <Inline alignBlock="center" space="space.200">
             <Button appearance="primary" onClick={handleSaveCredentials} isDisabled={!canSave}>
-              {savingCreds ? 'Saving...' : 'Save & Continue →'}
+              {savingCreds ? 'Saving…' : 'Continue to Migration →'}
             </Button>
+            {canSave && <Text>Both connections verified ✓</Text>}
           </Inline>
         </Stack>
       )}
 
       {/* ── Main migration wizard (shown after credentials are set) ── */}
       {credScreen === 'connected' && (
-      <Stack space="space.500">
+      <Stack space="space.400">
 
-        {/* Connected accounts banner */}
+        {/* Connection status bar */}
         <SectionMessage appearance="success">
           <Inline spread="space-between" alignBlock="center">
             <Stack space="space.050">
-              <Text>✅ Jira: {credMeta?.jiraUrl} ({credMeta?.jiraEmail})</Text>
-              <Text>✅ ADO: dev.azure.com/{credMeta?.adoOrg}</Text>
+              <Text>🔵 Jira: {credMeta?.jiraUrl} ({credMeta?.jiraEmail})</Text>
+              <Text>🔷 ADO: dev.azure.com/{credMeta?.adoOrg}</Text>
             </Stack>
-            <Button appearance="subtle" onClick={handleDisconnect}>Disconnect</Button>
+            <Button appearance="subtle" onClick={handleDisconnect}>Manage connections</Button>
           </Inline>
         </SectionMessage>
 
-        {/* Landing — always visible above the form */}
-        <Stack space="space.300">
-          <Text>
-            Migrate Jira projects to Azure DevOps — cards, attachments, comments,
-            and metadata. Trusted for 3,000+ cards with 98.7% field accuracy.
-          </Text>
+        {/* Hero */}
+        <Stack space="space.100">
+          <Text>✨ ADO Migration Assistant</Text>
+          <Text>Move your Jira work to Azure DevOps — AI-guided analysis, human review, then migrate.</Text>
+        </Stack>
+
+        {/* CTA cards */}
+        {!isOpen && (
           <Stack space="space.200">
             <SectionMessage appearance="information">
-              <Text>📋  Migrate — bulk by Jira Filter ID, or target specific card keys.</Text>
+              <Stack space="space.200">
+                <Text>✨ AI-assisted Migration</Text>
+                <Text>Analyze your board, get AI-recommended type mappings, review the full plan, then migrate — no surprises.</Text>
+                <Inline>
+                  <Button appearance="primary" onClick={() => { setIsOpen(true); setActiveTab('ai'); }}>
+                    Start AI Migration →
+                  </Button>
+                </Inline>
+              </Stack>
             </SectionMessage>
-            <SectionMessage appearance="warning">
-              <Text>🔍  Gap Analysis — identify cards missed or in the wrong area path.</Text>
-            </SectionMessage>
-            <SectionMessage appearance="success">
-              <Text>✅  Verify — field-by-field accuracy check (title, assignee, attachments, comments).</Text>
+            <SectionMessage appearance="information">
+              <Stack space="space.200">
+                <Text>⚙️ Manual Migration</Text>
+                <Text>Migrate by Jira Filter ID or specific issue keys.</Text>
+                <Inline>
+                  <Button appearance="default" onClick={() => { setIsOpen(true); setActiveTab('migrate'); }}>
+                    Manual Migration
+                  </Button>
+                </Inline>
+              </Stack>
             </SectionMessage>
           </Stack>
-          {!isOpen && (
-            <Inline>
-              <Button appearance="primary" onClick={() => setIsOpen(true)}>
-                Open Migration Wizard →
-              </Button>
-            </Inline>
-          )}
-        </Stack>
+        )}
 
         {/* Wizard — modal popup, opens only on button click */}
         <ModalTransition>
           {isOpen && (
-            <Modal onClose={() => setIsOpen(false)}>
+            <Modal onClose={() => {}}>
               <ModalHeader>
                 <ModalTitle>
-                  {activeTab === 'ai' ? '✨ AI Migration' : activeTab === 'migrate' ? '⚙️ Manual Migration' : activeTab === 'gap' ? '🔍 Gap Analysis' : '✅ Verify Migration'}
+                  {activeTab === 'ai'
+                    ? (aiCurrentScreen === 'results'   ? '📊 Migration Analysis'
+                      : aiCurrentScreen === 'mapping'  ? '🗺️ Type Mappings'
+                      : aiCurrentScreen === 'plan'     ? '📋 Migration Plan'
+                      : aiCurrentScreen === 'migrating'? '⚡ Migrating…'
+                      : '✨ Start AI Migration')
+                    : '⚙️ Manual Migration'}
                 </ModalTitle>
               </ModalHeader>
               <ModalBody>
                 <Stack space="space.300">
-                  <Inline space="space.100">
-                    <Button appearance={activeTab === 'ai' ? 'primary' : 'default'} onClick={() => setActiveTab('ai')}>✨ AI Migrate</Button>
-                    <Button appearance={activeTab === 'migrate' ? 'primary' : 'default'} onClick={() => setActiveTab('migrate')}>⚙️ Manual</Button>
-                    <Button appearance={activeTab === 'gap' ? 'primary' : 'default'} onClick={() => setActiveTab('gap')}>🔍 Gap Analysis</Button>
-                    <Button appearance={activeTab === 'verify' ? 'primary' : 'default'} onClick={() => setActiveTab('verify')}>✅ Verify</Button>
-                  </Inline>
+                  {/* No tab switcher — user chose AI or Manual from the landing page */}
 
                   {activeTab === 'ai' && (
                     <AIMigrationTab
                       adoProjects={adoProjects}
                       isLoadingProjects={isLoadingProjects}
+                      onMigrationStateChange={setAiIsMigrating}
+                      onScreenChange={setAiCurrentScreen}
                     />
                   )}
 
@@ -392,42 +443,91 @@ const App = () => {
                         isDisabled={isRunning}
                       />
 
-                      {isRunning && (
-                        <SectionMessage appearance="information">
-                          <Stack space="space.200">
-                            <Inline space="space.100" alignBlock="center">
-                              <Spinner size="small" />
-                              <Text>{migrationStatus === 'starting' ? 'Starting migration...' : migrationStatus === 'queued' ? 'Queued — waiting for engine...' : 'Migration in progress...'}</Text>
-                            </Inline>
-                            {recentLogLines.length > 0
-                              ? <Stack space="space.050">{recentLogLines.map((line, i) => <Text key={i}>{line}</Text>)}</Stack>
-                              : <Text>Connecting to migration engine...</Text>}
-                          </Stack>
-                        </SectionMessage>
-                      )}
-                      {migrationStatus === 'completed' && (
-                        <SectionMessage appearance="success">
-                          <Stack space="space.100">
-                            <Text>✅ Migration completed successfully!</Text>
-                            {recentLogLines.length > 0 && <Text>{recentLogLines.join(' | ')}</Text>}
-                          </Stack>
-                        </SectionMessage>
-                      )}
-                      {migrationStatus === 'warning' && (
-                        <SectionMessage appearance="warning">
-                          <Text>⚠️ Migrated with issues — Assigned To could not be set (user not in ADO org).</Text>
-                        </SectionMessage>
-                      )}
-                      {migrationStatus === 'failed' && (
-                        <SectionMessage appearance="error">
-                          <Text>❌ {jobError || 'Migration failed'}</Text>
-                        </SectionMessage>
+                      {(() => {
+                        const isFinal = ['completed', 'warning', 'failed'].includes(migrationStatus);
+                        if (!isRunning && !isFinal) return null;
+
+                        const prog = jobProgress;
+                        const total = prog?.total ?? 0;
+                        const done  = prog?.done  ?? 0;
+                        const pct   = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                        const bars  = Math.round(pct / 10);
+                        const summaryMatch = (jobSummary || '').match(/(\d+) processed/);
+                        const processedCount = summaryMatch ? summaryMatch[1] : (done || '?');
+                        const failedMatch = (jobSummary || '').match(/(\d+) failed/);
+                        const failedCount = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+
+                        let appearance = 'information';
+                        let title = migrationStatus === 'starting' ? 'Starting migration…' : 'Migration queued — waiting for engine…';
+                        if (isRunning && prog?.current_card && total === 0) title = 'Migration started — counting issues…';
+                        if (isRunning && total > 0) title = `Migrating… ${done} of ${total} done · ${total - done} remaining`;
+                        if (migrationStatus === 'completed') { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
+                        if (migrationStatus === 'warning' && failedCount === 0) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
+                        if (migrationStatus === 'warning' && failedCount > 0)   { appearance = 'warning'; title = `Migration finished with warnings — ${processedCount} card(s) processed`; }
+                        if (migrationStatus === 'failed') { appearance = 'error'; title = 'Migration failed'; }
+
+                        return (
+                          <SectionMessage appearance={appearance}>
+                            <Stack space="space.200">
+                              <Text>{title}</Text>
+
+                              {isRunning && (
+                                <Stack space="space.050">
+                                  {total > 0 && (
+                                    <Text>{'█'.repeat(bars)}{'░'.repeat(10 - bars)} {pct}%</Text>
+                                  )}
+                                  {prog?.current_card ? (
+                                    <Inline space="space.100" alignBlock="center">
+                                      <Spinner size="small" />
+                                      <Text>
+                                        {prog.current_action === 'created'   ? '✅ Created' :
+                                         prog.current_action === 'updated'   ? '↻ Updated' :
+                                         prog.current_action === 'failed'    ? '❌ Failed' :
+                                         prog.current_action === 'duplicate' ? '⚠ Duplicate' :
+                                         '⏳ Processing'}{' '}{prog.current_card}
+                                        {prog.current_ado ? ` → ADO #${prog.current_ado}` : ''}
+                                        {total === 0 ? ' (counting issues…)' : ` · ${total - done} pending`}
+                                      </Text>
+                                    </Inline>
+                                  ) : (
+                                    <Inline space="space.100" alignBlock="center">
+                                      <Spinner size="small" />
+                                      <Text>Connecting to Jira…</Text>
+                                    </Inline>
+                                  )}
+                                </Stack>
+                              )}
+
+                              {isFinal && jobSummary && !(migrationStatus === 'warning' && failedCount === 0) && (
+                                <Text>{jobSummary}</Text>
+                              )}
+                              {isFinal && migrationStatus === 'warning' && failedCount > 0 && (
+                                <Text>Some field values (e.g. Assigned To) could not be set because the user is not in ADO. The name was preserved in the card description.</Text>
+                              )}
+                              {isFinal && migrationStatus === 'failed' && (
+                                <Text>{jobError || 'Migration failed — check resolver logs for details.'}</Text>
+                              )}
+                            </Stack>
+                          </SectionMessage>
+                        );
+                      })()}
+
+                      {jobCardCsv && ['completed', 'warning', 'failed'].includes(migrationStatus) && (
+                        <Button appearance="default" onClick={() => {
+                          const a = document.createElement('a');
+                          a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(jobCardCsv);
+                          a.download = `migration-report-${jobId?.slice(0, 8)}.csv`;
+                          a.click();
+                        }}>
+                          ⬇ Download Migration Report (CSV)
+                        </Button>
                       )}
                     </Stack>
                   )}
 
                   {activeTab === 'gap' && <GapAnalysisTab adoProjects={adoProjects} isLoadingProjects={isLoadingProjects} />}
                   {activeTab === 'verify' && <VerifyTab adoProjects={adoProjects} isLoadingProjects={isLoadingProjects} />}
+                  {/* Hidden tab content — kept for when tabs are re-enabled above */}
                 </Stack>
               </ModalBody>
               <ModalFooter>

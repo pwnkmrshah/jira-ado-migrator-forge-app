@@ -36,3 +36,4 @@ permissions:
         - address: https://*.ngrok-free.app
         - address: https://*.ngrok-free.dev
         - address: https://*.ngrok.io
+        - address: https://api.openai.com

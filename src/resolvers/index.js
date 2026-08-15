@@ -1,5 +1,5 @@
 import Resolver from '@forge/resolver';
-import { storage } from '@forge/api';
+import { kvs as storage } from '@forge/kvs';
 
 const resolver = new Resolver();
 
@@ -153,6 +153,122 @@ resolver.define('getAdoBoards', async ({ payload }) => {
     return { boards: (data.value || []).map(b => ({ id: b.id, name: b.name })) };
   } catch (err) {
     return { boards: [], error: `Could not fetch ADO boards: ${err.message}` };
+  }
+});
+
+// Fetches Jira projects using stored credentials (direct Jira API call, no Flask needed).
+resolver.define('getJiraProjects', async () => {
+  try {
+    const [jiraUrl, jiraEmail, jiraToken] = await Promise.all([
+      storage.get('jira_url'),
+      storage.get('jira_email'),
+      storage.getSecret('jira_token'),
+    ]);
+    if (!jiraUrl || !jiraEmail || !jiraToken)
+      return { projects: [], error: 'Jira credentials not configured — complete setup first' };
+
+    const creds = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+    const res = await fetch(
+      `${jiraUrl.replace(/\/$/, '')}/rest/api/3/project/search?maxResults=100&orderBy=name`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return { projects: [], error: `Jira returned HTTP ${res.status}` };
+    const data = await res.json();
+    return { projects: (data.values || []).map(p => ({ key: p.key, name: p.name })) };
+  } catch (err) {
+    return { projects: [], error: `Could not fetch Jira projects: ${err.message}` };
+  }
+});
+
+// Returns the current user's saved Jira filters (used for scope = 'filter' in AI wizard).
+resolver.define('getJiraFilters', async ({ payload }) => {
+  try {
+    const [jiraUrl, jiraEmail, jiraToken] = await Promise.all([
+      storage.get('jira_url'),
+      storage.get('jira_email'),
+      storage.getSecret('jira_token'),
+    ]);
+    if (!jiraUrl || !jiraEmail || !jiraToken) return { filters: [] };
+
+    const creds = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+    const res = await fetch(
+      `${jiraUrl.replace(/\/$/, '')}/rest/api/3/filter/my?expand=jql&maxResults=50`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return { filters: [] };
+    const data = await res.json();
+    return { filters: (data || []).map(f => ({ id: f.id, name: f.name, jql: f.jql })) };
+  } catch (err) {
+    return { filters: [], error: err.message };
+  }
+});
+
+// Fetches Jira boards (Agile API) — each board has id, name, type, projectKey.
+resolver.define('getJiraBoards', async () => {
+  try {
+    const [jiraUrl, jiraEmail, jiraToken] = await Promise.all([
+      storage.get('jira_url'),
+      storage.get('jira_email'),
+      storage.getSecret('jira_token'),
+    ]);
+    if (!jiraUrl || !jiraEmail || !jiraToken)
+      return { boards: [], error: 'Jira credentials not configured' };
+
+    const creds = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+    const res = await fetch(
+      `${jiraUrl.replace(/\/$/, '')}/rest/agile/1.0/board?maxResults=50&orderBy=name`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return { boards: [], error: `Jira returned HTTP ${res.status}` };
+    const data = await res.json();
+    return {
+      boards: (data.values || []).map(b => ({
+        id: b.id,
+        name: b.name,
+        type: b.type,
+        projectKey: b.location?.projectKey || '',
+        projectName: b.location?.projectName || '',
+      })),
+    };
+  } catch (err) {
+    return { boards: [], error: `Could not fetch boards: ${err.message}` };
+  }
+});
+
+// Fetches all statuses used in a Jira project, deduplicated across issue types.
+resolver.define('getJiraBoardStatuses', async ({ payload }) => {
+  try {
+    const [jiraUrl, jiraEmail, jiraToken] = await Promise.all([
+      storage.get('jira_url'),
+      storage.get('jira_email'),
+      storage.getSecret('jira_token'),
+    ]);
+    const projectKey = payload?.projectKey;
+    if (!jiraUrl || !jiraEmail || !jiraToken || !projectKey)
+      return { statuses: [] };
+
+    const creds = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+    const res = await fetch(
+      `${jiraUrl.replace(/\/$/, '')}/rest/api/3/project/${projectKey}/statuses`,
+      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return { statuses: [] };
+    const data = await res.json();
+
+    // Flatten + deduplicate statuses across all issue types
+    const seen = new Set();
+    const statuses = [];
+    for (const issueType of (data || [])) {
+      for (const s of (issueType.statuses || [])) {
+        if (!seen.has(s.id)) {
+          seen.add(s.id);
+          statuses.push({ id: s.id, name: s.name, category: s.statusCategory?.name || '' });
+        }
+      }
+    }
+    return { statuses };
+  } catch (err) {
+    return { statuses: [] };
   }
 });
 
@@ -327,6 +443,68 @@ const MOCK_ANALYSIS = {
   _mock: true,
 };
 
+// Calls OpenAI to generate type mappings + risk summary from the analysis result.
+resolver.define('runAIPlan', async ({ payload }) => {
+  const openAiKey = process.env.OPENAI_API_KEY;
+  if (!openAiKey) return { error: 'OPENAI_API_KEY not configured — run: forge variables set --environment development OPENAI_API_KEY <key>' };
+
+  const { byType = [], adoTypes = [], userGaps = [], adoProject = '' } = payload || {};
+
+  const prompt = `You are a migration advisor helping move Jira issues to Azure DevOps.
+
+Jira issue types in use (with counts):
+${JSON.stringify(byType, null, 2)}
+
+Azure DevOps project "${adoProject}" supports these work item types:
+${JSON.stringify(adoTypes)}
+
+${userGaps.length > 0 ? `Users not found in ADO (will be preserved in card description): ${userGaps.map(u => u.jira_user || u).join(', ')}` : ''}
+
+Task: For each Jira type, recommend the best ADO work item type from the available list.
+
+Return ONLY a valid JSON array with no extra text, markdown or explanation:
+[{"jira":"Story","ado":"User Story","confidence":96,"reason":"Direct semantic equivalent — same concept in both systems"}]
+
+Rules:
+- confidence 90-100: exact or industry-standard match
+- confidence 75-89: reasonable match with minor differences  
+- confidence 60-74: closest available type, review recommended
+- confidence below 60: no clear match, human decision required
+- Only use types from the ADO available list above`;
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openAiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 1000,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { error: `OpenAI returned HTTP ${res.status}: ${err?.error?.message || 'unknown error'}` };
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content?.trim() || '[]';
+
+    // Strip markdown code fences if the model wraps in ```json
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const mappings = JSON.parse(cleaned);
+
+    return { type_mappings: mappings };
+  } catch (err) {
+    return { error: `AI mapping failed: ${err.message}` };
+  }
+});
+
 // Calls Flask /analyze with credentials; falls back to mock data for demo purposes.
 resolver.define('runAnalysis', async ({ payload }) => {
   const apiUrl = process.env.MIGRATION_API_URL;
@@ -347,24 +525,31 @@ resolver.define('runAnalysis', async ({ payload }) => {
       method: 'POST',
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        intent:      payload?.intent || '',
-        ado_project: payload?.adoProject || '',
-        jira_url:    jiraUrl || '',
-        jira_email:  jiraEmail || '',
-        jira_token:  jiraToken || '',
-        ado_org:     adoOrg || '',
-        ado_pat:     adoPat || '',
+        ado_project:       payload?.adoProject || '',
+        jira_project_key:  payload?.jiraProjectKey || '',
+        status_filter:     payload?.statusFilter || [],   // [] = all statuses
+        field_filter:      payload?.fieldFilter || [],    // [] = all fields
+        jira_url:          jiraUrl || '',
+        jira_email:        jiraEmail || '',
+        jira_token:        jiraToken || '',
+        ado_org:           adoOrg || '',
+        ado_pat:           adoPat || '',
       }),
     });
 
     if (!res.ok) {
-      // Flask endpoint not built yet — fall back to mock so UI is demonstrable
-      return { ...MOCK_ANALYSIS, _note: `Flask /analyze returned ${res.status} — showing mock data` };
+      // Propagate real errors so the UI can display them clearly
+      try {
+        const errBody = await res.json();
+        return { error: errBody.error || `Analysis failed (HTTP ${res.status})` };
+      } catch {
+        return { error: `Analysis failed (HTTP ${res.status})` };
+      }
     }
 
     return await res.json();
-  } catch {
-    return { ...MOCK_ANALYSIS, _note: 'Flask unreachable — showing mock data' };
+  } catch (err) {
+    return { error: `Could not reach the migration server. Is it running? (${err.message})` };
   }
 });
 
@@ -388,15 +573,20 @@ resolver.define('approveMigrationPlan', async ({ payload }) => {
       method: 'POST',
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...payload,
         jira_url:   jiraUrl,
         jira_email: jiraEmail,
         jira_token: jiraToken,
         ado_org:    adoOrg,
         ado_pat:    adoPat,
+        ado_project: payload?.adoProject || '',
+        jql:         payload?.jql || '',
+        skip_attachments: payload?.skipAttachments || false,
       }),
     });
-    if (!res.ok) return { error: `Migration API returned HTTP ${res.status}` };
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { error: err.error || `Migration API returned HTTP ${res.status}` };
+    }
     return await res.json();
   } catch (err) {
     return { error: `Could not start migration: ${err.message}` };

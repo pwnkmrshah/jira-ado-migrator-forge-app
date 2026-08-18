@@ -215,21 +215,43 @@ resolver.define('getJiraBoards', async () => {
       return { boards: [], error: 'Jira credentials not configured' };
 
     const creds = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+    const headers = { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' };
+    const base = jiraUrl.replace(/\/$/, '');
+
+    // Try agile boards API first (Scrum/Kanban boards)
     const res = await fetch(
-      `${jiraUrl.replace(/\/$/, '')}/rest/agile/1.0/board?maxResults=50&orderBy=name`,
-      { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
+      `${base}/rest/agile/1.0/board?maxResults=50&orderBy=name&expand=location`,
+      { headers }
     );
-    if (!res.ok) return { boards: [], error: `Jira returned HTTP ${res.status}` };
-    const data = await res.json();
-    return {
-      boards: (data.values || []).map(b => ({
+
+    if (res.ok) {
+      const data = await res.json();
+      const boards = (data.values || []).map(b => ({
         id: b.id,
         name: b.name,
         type: b.type,
         projectKey: b.location?.projectKey || '',
-        projectName: b.location?.projectName || '',
-      })),
-    };
+        projectName: b.location?.projectName || b.name,
+      })).filter(b => b.projectKey); // only include boards with a known project key
+
+      if (boards.length > 0) return { boards };
+    }
+
+    // Fallback: use Jira projects as board equivalents
+    const projRes = await fetch(
+      `${base}/rest/api/3/project/search?maxResults=50&orderBy=name`,
+      { headers }
+    );
+    if (!projRes.ok) return { boards: [], error: `Jira returned HTTP ${projRes.status}` };
+    const projData = await projRes.json();
+    const boards = (projData.values || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      type: 'project',
+      projectKey: p.key,
+      projectName: p.name,
+    }));
+    return { boards, _source: 'projects' };
   } catch (err) {
     return { boards: [], error: `Could not fetch boards: ${err.message}` };
   }

@@ -150,13 +150,21 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   // Load boards on mount
   useEffect(() => {
     invoke('getJiraBoards').then(res => {
-      setBoards((res.boards || []).map(b => ({
+      const mapped = (res.boards || []).map(b => ({
         label: `${b.name} (${b.projectKey})`,
-        value: b.projectKey,
+        value: b.projectKey,          // projectKey used for statuses + analysis
         boardId: b.id,
         boardName: b.name,
-      })));
+        projectKey: b.projectKey,
+      }));
+      setBoards(mapped);
       setIsLoadingBoards(false);
+      if (res.error && mapped.length === 0) {
+        setAnalyzeError(`Could not load boards: ${res.error}`);
+      }
+    }).catch(err => {
+      setIsLoadingBoards(false);
+      setAnalyzeError(`Failed to load Jira boards: ${err.message}`);
     });
   }, []);
 

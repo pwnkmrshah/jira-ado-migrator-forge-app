@@ -15,6 +15,23 @@ import {
 import { invoke } from '@forge/bridge';
 import React, { useState, useEffect, useRef } from 'react';
 
+// Parse verify CSV → count rows with warnings/failures
+const parseCsvIssues = (csvStr) => {
+  if (!csvStr) return { warnings: 0, failed: 0 };
+  const lines = csvStr.trim().split('\n').filter(Boolean);
+  if (lines.length < 2) return { warnings: 0, failed: 0 };
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const si = headers.indexOf('migration_status');
+  if (si < 0) return { warnings: 0, failed: 0 };
+  let warnings = 0, failed = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const st = (lines[i].split(',')[si] || '').trim().replace(/^"|"$/g, '');
+    if (st === 'warnings') warnings++;
+    else if (st === 'failed') failed++;
+  }
+  return { warnings, failed };
+};
+
 // Dot rating for confidence: ●●●○ 74%
 const ConfidenceDots = ({ score }) => {
   const filled = score >= 90 ? 4 : score >= 75 ? 3 : score >= 60 ? 2 : 1;
@@ -71,6 +88,12 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [selectedFields, setSelectedFields] = useState(FIELD_OPTIONS.map(f => f.id));
   const [selectedAdoProject, setSelectedAdoProject] = useState(null);
+
+  // Status filter (fetched per-board; only re-fetched when board value changes)
+  const [boardStatuses, setBoardStatuses] = useState([]);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [isLoadingStatuses, setIsLoadingStatuses] = useState(false);
+  const lastStatusBoardRef = useRef(null); // prevents re-fetch on same-value re-selection
 
   // Migration scope
   const [migrationScope, setMigrationScope] = useState(SCOPE_OPTIONS[0]);
@@ -138,13 +161,29 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   }, []);
 
   const handleBoardChange = (opt) => {
+    if (opt?.value === selectedBoard?.value) return;
     setSelectedBoard(opt);
+    // Reset all scope-specific state when board changes
+    setMigrationScope(SCOPE_OPTIONS[0]); // back to 'entire_board'
     setSelectedFilter(null);
     setJiraFilters([]);
-    // If scope is already 'filter', fetch filters for the new board
-    if (migrationScope.value === 'filter' && opt?.value) {
-      fetchJiraFilters(opt.value);
+    setSpecificIssues('');
+    if (opt?.value && opt.value !== lastStatusBoardRef.current) {
+      lastStatusBoardRef.current = opt.value;
+      fetchBoardStatuses(opt.value);
     }
+  };
+
+  const fetchBoardStatuses = (projectKey) => {
+    setIsLoadingStatuses(true);
+    setBoardStatuses([]);
+    setSelectedStatuses([]);
+    invoke('getJiraBoardStatuses', { projectKey }).then(res => {
+      const statuses = res.statuses || [];
+      setBoardStatuses(statuses);
+      setSelectedStatuses(statuses.map(s => s.name)); // all selected by default
+      setIsLoadingStatuses(false);
+    });
   };
 
   const fetchJiraFilters = (projectKey) => {
@@ -156,8 +195,12 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   };
 
   const handleScopeChange = (opt) => {
+    // Guard: ignore if same scope re-selected
+    if (opt?.value === migrationScope?.value) return;
     setMigrationScope(opt);
+    // Reset scope-specific selections on every real scope change
     setSelectedFilter(null);
+    setSpecificIssues('');
     if (opt.value === 'filter' && selectedBoard?.value) {
       fetchJiraFilters(selectedBoard.value);
     }
@@ -184,7 +227,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
       const result = await invoke('runAnalysis', {
         adoProject: selectedAdoProject.label,
         jiraProjectKey: selectedBoard.value,
-        statusFilter: [],
+        statusFilter: selectedStatuses,
         fieldFilter: selectedFields,
         migrationScope: migrationScope.value,
         filterId: migrationScope.value === 'filter' ? selectedFilter?.value : undefined,
@@ -272,15 +315,14 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   const needsReview = typeMappings.filter(m => !m.userApproved);
   const userGaps = analysisResult?.user_gaps || [];
 
-  // ── Screen 1: Setup (Board + Status + Field + ADO) ──────────────────────────
+  // ── Screen 1: Setup — Board → Scope → scope content → ADO target ──────────
   if (aiScreen === 'setup') {
     return (
       <Stack space="space.300">
 
-        {/* Subtitle */}
         <Text>Choose your source, scope, and destination. We'll analyze the migration before anything is changed.</Text>
 
-        {/* Board selector */}
+        {/* Step 1: Board selector */}
         <Stack space="space.050">
           <Text>SOURCE</Text>
           <Label labelFor="ai-board">Jira Board *</Label>
@@ -295,7 +337,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
           )}
         </Stack>
 
-        {/* Migration Scope */}
+        {/* Step 2: Scope — disabled until a board is selected */}
         <Stack space="space.050">
           <Text>SCOPE</Text>
           <Label labelFor="ai-scope">Migration Scope *</Label>
@@ -304,11 +346,43 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
             options={SCOPE_OPTIONS}
             value={migrationScope}
             onChange={handleScopeChange}
+            isDisabled={!selectedBoard}
           />
         </Stack>
 
-        {/* Filter picker — shown when scope = 'filter' */}
-        {migrationScope.value === 'filter' && selectedBoard && (
+        {/* Step 3: Scope-specific content — only rendered after board is chosen */}
+        {selectedBoard && migrationScope.value === 'entire_board' && (
+          <Stack space="space.100">
+            <Text>Which statuses to include?</Text>
+            {isLoadingStatuses ? <Spinner size="small" /> : (
+              boardStatuses.length > 0 && (
+                <Stack space="space.050">
+                  <Text>
+                    {selectedStatuses.length === boardStatuses.length
+                      ? 'All statuses selected — uncheck any to exclude them.'
+                      : `${selectedStatuses.length} of ${boardStatuses.length} statuses selected`}
+                  </Text>
+                  <Inline space="space.300" alignBlock="center">
+                    {boardStatuses.map(s => (
+                      <Checkbox
+                        key={s.id}
+                        label={s.name}
+                        isChecked={selectedStatuses.includes(s.name)}
+                        onChange={() => setSelectedStatuses(prev =>
+                          prev.includes(s.name)
+                            ? prev.filter(n => n !== s.name)
+                            : [...prev, s.name]
+                        )}
+                      />
+                    ))}
+                  </Inline>
+                </Stack>
+              )
+            )}
+          </Stack>
+        )}
+
+        {selectedBoard && migrationScope.value === 'filter' && (
           <Stack space="space.100">
             <Label labelFor="ai-filter">Saved Jira Filter *</Label>
             {isLoadingFilters ? <Spinner size="small" /> : (
@@ -326,8 +400,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
           </Stack>
         )}
 
-        {/* Specific issues input — shown when scope = 'specific' */}
-        {migrationScope.value === 'specific' && (
+        {selectedBoard && migrationScope.value === 'specific' && (
           <Stack space="space.100">
             <Label labelFor="ai-keys">🔑 Issue Keys * (comma-separated)</Label>
             <TextArea
@@ -339,7 +412,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
           </Stack>
         )}
 
-        {/* ADO target */}
+        {/* Step 4: ADO target */}
         <Stack space="space.050">
           <Text>TARGET</Text>
           <Label labelFor="ai-ado-project">Azure DevOps Project *</Label>
@@ -603,11 +676,6 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   }
 
   // ── Screen 4: Migration Plan Approval ──────────────────────────────────────
-  const warnings = [
-    ...userGaps.map(u => `${u.jira_user} has no ADO account — name preserved in description`),
-    ...typeMappings.filter(m => m.confidence < 80).map(m => `"${m.jira}" → "${m.ado}" (${m.confidence}% confidence)`),
-  ];
-
   if (aiScreen === 'plan') {
   return (
     <Stack space="space.400">
@@ -650,14 +718,6 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
           <Text key={m.jira}>  {m.jira} → {m.ado}</Text>
         ))}
 
-        {warnings.length > 0 && (
-          <SectionMessage appearance="warning">
-            <Stack space="space.100">
-              <Text>Warnings</Text>
-              {warnings.map((w, i) => <Text key={i}>⚠ {w}</Text>)}
-            </Stack>
-          </SectionMessage>
-        )}
       </Stack>
 
       <Inline space="space.100">
@@ -691,6 +751,10 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
     const failedMatch = (migrationJob?.summary || '').match(/(\d+) failed/);
     const failedCount = failedMatch ? parseInt(failedMatch[1], 10) : 0;
 
+    // Ground truth: parse the verify CSV for actual warnings/failures
+    const { warnings: csvWarnings, failed: csvFailed } = parseCsvIssues(migrationJob?.cardCsv);
+    const hasIssues = csvWarnings > 0 || csvFailed > 0;
+
     const downloadCsv = () => {
       const csv = migrationJob?.cardCsv;
       if (!csv) return;
@@ -704,9 +768,10 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
     let title = 'Migration queued — starting worker…';
     if (isRunning && prog?.current_card && total === 0) title = 'Migration started — counting issues…';
     if (isRunning && total > 0) title = `Migrating… ${done} of ${total} done · ${total - done} remaining`;
-    if (status === 'completed') { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
-    if (status === 'warning' && failedCount === 0) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
-    if (status === 'warning' && failedCount > 0)   { appearance = 'warning'; title = `Migration finished with warnings — ${processedCount} card(s) processed`; }
+    if (status === 'completed' && !hasIssues) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
+    if (status === 'completed' && hasIssues)   { appearance = 'warning'; title = `Migration complete — ${csvWarnings} card(s) have field warnings`; }
+    if (status === 'warning' && !hasIssues) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
+    if (status === 'warning' && hasIssues)  { appearance = 'warning'; title = `Migration complete — ${csvWarnings > 0 ? `${csvWarnings} card(s) with warnings` : ''}${csvFailed > 0 ? `${csvWarnings > 0 ? ', ' : ''}${csvFailed} failed` : ''}`; }
     if (status === 'failed')    { appearance = 'error';   title = 'Migration failed'; }
     if (migrationJob?.error)    { appearance = 'error';   title = 'Failed to start migration'; }
 
@@ -753,12 +818,15 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
                 </Stack>
               )}
 
-              {/* Final human-readable summary — suppress backend text when appearance was upgraded to success */}
-              {isFinal && migrationJob?.summary && !(status === 'warning' && failedCount === 0) && (
+              {/* Final human-readable summary */}
+              {isFinal && migrationJob?.summary && !hasIssues && (
                 <Text>{migrationJob.summary}</Text>
               )}
-              {isFinal && status === 'warning' && failedCount > 0 && (
-                <Text>Some field values (e.g. Assigned To, Requested By) could not be set because the user is not in ADO. The name was preserved in the card description.</Text>
+              {isFinal && hasIssues && (
+                <Text>
+                  {csvWarnings > 0 && `${csvWarnings} card(s) migrated with field warnings (e.g. state or priority mismatch) — download the report for details.`}
+                  {csvFailed > 0 && ` ${csvFailed} card(s) failed to migrate.`}
+                </Text>
               )}
             </Stack>
           </SectionMessage>

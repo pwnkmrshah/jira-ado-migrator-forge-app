@@ -580,6 +580,7 @@ resolver.define('approveMigrationPlan', async ({ payload }) => {
         ado_pat:    adoPat,
         ado_project: payload?.adoProject || '',
         jql:         payload?.jql || '',
+        field_filter: payload?.field_filter || [],
         skip_attachments: payload?.skipAttachments || false,
       }),
     });

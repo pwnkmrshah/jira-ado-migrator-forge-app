@@ -397,6 +397,7 @@ const App = () => {
                       isLoadingProjects={isLoadingProjects}
                       onMigrationStateChange={setAiIsMigrating}
                       onScreenChange={setAiCurrentScreen}
+                      onClose={() => setIsOpen(false)}
                     />
                   )}
 
@@ -534,7 +535,11 @@ const App = () => {
                 <Button appearance="subtle" onClick={() => setIsOpen(false)}>Cancel</Button>
                 {activeTab === 'migrate' && (
                   <Button appearance="primary" onClick={handleMigrate} isDisabled={!canMigrate}>
-                    {isRunning ? 'Migrating...' : 'Migrate to ADO'}
+                    {isRunning
+                      ? 'Migrating…'
+                      : ['completed', 'warning', 'failed'].includes(migrationStatus)
+                        ? 'Migrate Again'
+                        : 'Migrate to ADO'}
                   </Button>
                 )}
               </ModalFooter>

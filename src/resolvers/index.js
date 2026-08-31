@@ -604,6 +604,7 @@ resolver.define('approveMigrationPlan', async ({ payload }) => {
         jql:         payload?.jql || '',
         field_filter: payload?.field_filter || [],
         skip_attachments: payload?.skipAttachments || false,
+        ado_team_name: payload?.adoTeamName || '',
       }),
     });
     if (!res.ok) {
@@ -613,6 +614,23 @@ resolver.define('approveMigrationPlan', async ({ payload }) => {
     return await res.json();
   } catch (err) {
     return { error: `Could not start migration: ${err.message}` };
+  }
+});
+
+resolver.define('cancelJob', async ({ payload }) => {
+  const apiUrl = process.env.MIGRATION_API_URL;
+  const apiKey = process.env.MIGRATION_API_KEY || '';
+  const { jobId } = payload || {};
+  if (!apiUrl) return { error: 'MIGRATION_API_URL not configured' };
+  if (!jobId)  return { error: 'jobId is required' };
+  try {
+    const res = await fetch(`${apiUrl}/cancel/${jobId}`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey },
+    });
+    return res.ok ? { cancelled: true } : { error: `Cancel returned HTTP ${res.status}` };
+  } catch (err) {
+    return { error: `Could not cancel job: ${err.message}` };
   }
 });
 

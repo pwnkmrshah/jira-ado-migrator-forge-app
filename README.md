@@ -67,7 +67,7 @@ repos/jira-to-ado/             ← sibling repo (Python migration engine)
 ```bash
 cd /home/pawan/ferret/repos/jira-to-ado
 
-export MIGRATION_API_KEY=your-secret-key
+export MIGRATION_API_KEY=demo-key-change-me
 pip install flask   # once
 python3 api_server.py
 # → Listening on http://0.0.0.0:5001
@@ -172,9 +172,10 @@ cd /home/pawan/ferret/jira-ado-migrator-forge-app
 source .env                          # REQUIRED — loads FORGE_EMAIL + FORGE_API_TOKEN
 export NVM_DIR="$HOME/.nvm" && source "$NVM_DIR/nvm.sh" && nvm use 22
 
-forge variables set --environment development MIGRATION_API_URL https://YOUR-NGROK-URL-HERE
+forge variables set --environment development MIGRATION_API_URL https://limping-blabber-quench.ngrok-free.dev
 forge deploy --no-verify
 ```
+<!-- kill $(lsof -ti:5001) 2>/dev/null && export MIGRATION_API_KEY=demo-key-change-me && python3 api_server.py -->
 
 **If the ngrok URL is the same as last time** (e.g. you have a saved static domain), skip this step.
 

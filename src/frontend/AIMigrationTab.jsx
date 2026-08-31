@@ -41,6 +41,9 @@ const ConfidenceDots = ({ score }) => {
 };
 
 const tileStyle = xcss({ padding: 'space.200', textAlign: 'center' });
+const screenTitle = xcss({ fontWeight: 700, fontSize: '18px' });
+const sectionTitle = xcss({ fontWeight: 600 });
+const statNumber = xcss({ fontWeight: 700, fontSize: '20px' });
 
 const FIELD_GROUPS = [
   {
@@ -78,7 +81,7 @@ const SCOPE_OPTIONS = [
   { label: 'Specific issues', value: 'specific' },
 ];
 
-const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange, onScreenChange }) => {
+const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange, onScreenChange, onClose }) => {
   // aiScreen: 'setup' | 'analyzing' | 'results' | 'mapping' | 'plan'
   const [aiScreen, setAiScreen] = useState('setup');
 
@@ -298,6 +301,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
     const approvedPlan = {
       adoProject: selectedAdoProject?.label,
       jiraProjectKey: selectedBoard?.value,
+      adoTeamName: selectedBoard?.boardName || selectedBoard?.value,
       jql: analysisResult?.jql_used,
       scope: analysisResult?.total_issues,
       selectedStatuses: [],
@@ -497,7 +501,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
     const r = analysisResult;
     return (
       <Stack space="space.400">
-        <Text>📊 Migration Analysis — {selectedAdoProject?.label}</Text>
+        <Box xcss={screenTitle}><Text>📊 Migration Analysis — {selectedAdoProject?.label}</Text></Box>
 
         {aiPlanError && (
           <SectionMessage appearance="warning">
@@ -509,25 +513,26 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
         <Inline space="space.200">
           <Box xcss={tileStyle}>
             <Stack space="space.050" alignInline="center">
-              <Text>{r.total_issues ?? '—'}</Text>
+              <Box xcss={statNumber}><Text>{r.total_issues ?? '—'}</Text></Box>
               <Text>Issues</Text>
             </Stack>
           </Box>
           <Box xcss={tileStyle}>
             <Stack space="space.050" alignInline="center">
-              <Text>{needsReview.length}</Text>
+              <Box xcss={statNumber}><Text>{needsReview.length}</Text></Box>
               <Text>Need Review</Text>
             </Stack>
           </Box>
           <Box xcss={tileStyle}>
             <Stack space="space.050" alignInline="center">
-              <Text>{userGaps.length}</Text>
+              <Box xcss={statNumber}><Text>{userGaps.length}</Text></Box>
               <Text>User Gaps</Text>
+              <Text>no ADO account</Text>
             </Stack>
           </Box>
           <Box xcss={tileStyle}>
             <Stack space="space.050" alignInline="center">
-              <Text>{r.attachment_count ?? 0}</Text>
+              <Box xcss={statNumber}><Text>{r.attachment_count ?? 0}</Text></Box>
               <Text>Attachments</Text>
             </Stack>
           </Box>
@@ -535,7 +540,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
 
         {/* AI Findings — grouped by severity */}
         <Stack space="space.200">
-          <Text>AI Findings</Text>
+          <Box xcss={sectionTitle}><Text>AI Findings</Text></Box>
 
           {typeMappings.filter(m => m.confidence >= 90).length > 0 && (
             <SectionMessage appearance="success">
@@ -687,7 +692,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
   if (aiScreen === 'plan') {
   return (
     <Stack space="space.400">
-      <Text>📋 Migration Plan</Text>
+        <Box xcss={screenTitle}><Text>Migration Plan</Text></Box>
 
       <Stack space="space.200">
         <SectionMessage appearance="information">
@@ -708,7 +713,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
         </SectionMessage>
 
         <Stack space="space.100">
-          <Text>Migration Content</Text>
+          <Box xcss={sectionTitle}><Text>Migration Content</Text></Box>
           <Inline space="space.400" alignBlock="start">
             {FIELD_GROUPS.map(group => (
               <Stack key={group.label} space="space.050">
@@ -721,7 +726,7 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
           </Inline>
         </Stack>
 
-        <Text>Type Mappings</Text>
+        <Box xcss={sectionTitle}><Text>Type Mappings</Text></Box>
         {typeMappings.map(m => (
           <Text key={m.jira}>  {m.jira} → {m.ado}</Text>
         ))}
@@ -778,8 +783,13 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
     if (isRunning && total > 0) title = `Migrating… ${done} of ${total} done · ${total - done} remaining`;
     if (status === 'completed' && !hasIssues) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
     if (status === 'completed' && hasIssues)   { appearance = 'warning'; title = `Migration complete — ${csvWarnings} card(s) have field warnings`; }
-    if (status === 'warning' && !hasIssues) { appearance = 'success'; title = `Migration complete — ${processedCount} card(s) migrated ✓`; }
-    if (status === 'warning' && hasIssues)  { appearance = 'warning'; title = `Migration complete — ${csvWarnings > 0 ? `${csvWarnings} card(s) with warnings` : ''}${csvFailed > 0 ? `${csvWarnings > 0 ? ', ' : ''}${csvFailed} failed` : ''}`; }
+    // status='warning' means Flask detected errors in stderr — always surface as warning
+    if (status === 'warning') {
+      appearance = 'warning';
+      title = hasIssues
+        ? `Migration completed with issues — ${csvWarnings > 0 ? `${csvWarnings} card(s) with warnings` : ''}${csvFailed > 0 ? `${csvWarnings > 0 ? ', ' : ''}${csvFailed} failed` : ''}`
+        : 'Migration completed with errors';
+    }
     if (status === 'failed')    { appearance = 'error';   title = 'Migration failed'; }
     if (migrationJob?.error)    { appearance = 'error';   title = 'Failed to start migration'; }
 
@@ -826,18 +836,27 @@ const AIMigrationTab = ({ adoProjects, isLoadingProjects, onMigrationStateChange
                 </Stack>
               )}
 
-              {/* Final human-readable summary */}
-              {isFinal && migrationJob?.summary && !hasIssues && (
+              {/* Final human-readable summary — always show when available */}
+              {isFinal && migrationJob?.summary && (
                 <Text>{migrationJob.summary}</Text>
-              )}
-              {isFinal && hasIssues && (
-                <Text>
-                  {csvWarnings > 0 && `${csvWarnings} card(s) migrated with field warnings (e.g. state or priority mismatch) — download the report for details.`}
-                  {csvFailed > 0 && ` ${csvFailed} card(s) failed to migrate.`}
-                </Text>
               )}
             </Stack>
           </SectionMessage>
+        )}
+
+        {/* Cancel while in-flight */}
+        {isRunning && (
+          <Button
+            appearance="warning"
+            onClick={async () => {
+              const jobId = migrationJob?.jobId;
+              if (jobId) await invoke('cancelJob', { jobId });
+              setMigrationJob(prev => ({ ...prev, status: 'cancelled' }));
+              if (onClose) onClose();
+            }}
+          >
+            ✕ Cancel Migration
+          </Button>
         )}
 
         {/* CSV download — only shown once report is ready */}
